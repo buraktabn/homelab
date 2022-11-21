@@ -1,0 +1,95 @@
+version: "3"
+
+networks:
+  nginx:
+    external: true
+  psgl:
+    external: true
+  redis:
+    external: true
+
+services:
+  #################################################################
+  #       REDIS
+  #################################################################
+  redis:
+    image: redis
+    container_name: redis
+    restart: always
+    env_file:
+      - ./tz.env
+    volumes:
+      - ./.redis:/data
+    ports:
+      - 6379:6379
+    networks:
+      - redis
+  #################################################################
+  #       POSTGRESQL
+  #################################################################
+  psql:
+    image: postgres
+    container_name: psql
+    restart: always
+    env_file:
+      - ./tz.env
+      - ./psql.env
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - ./.postgresql:/var/lib/postgresql/data
+    ports:
+      - 5432:5432
+    networks:
+      - psql
+  #################################################################
+  #       PG-ADMIN
+  #################################################################
+  pgadmin:
+    container_name: pgadmin4
+    image: dpage/pgadmin4
+    restart: always
+    env_file:
+      - ./tz.env
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    networks:
+      - psql
+      - nginx
+    depends_on:
+      - psql
+  #################################################################
+  #       MYSQL
+  #################################################################
+  mysql:
+    image: mysql:5.7
+    container_name: mysql
+    restart: always
+    env_file:
+      - ./tz.env
+      - ./mysql.env
+    ports:
+      - "3306:3306"
+    volumes:
+      - ./.mysql:/var/lib/mysql
+    networks:
+      - mysql
+  #################################################################
+  #       PHP MY ADMIN
+  #################################################################
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin
+    container_name: pma
+    restart: always
+    links:
+      - mysql
+    env_file:
+      - ./tz.env
+      - ./mysql.env
+    environment:
+      - PMA_HOST=$MYSQL_HOST
+      - PMA_PORT=$MYSQL_PORT
+      - PMA_ARBITRARY=1
+    networks:
+      - mysql

@@ -1,0 +1,425 @@
+version: "3.5"
+
+volumes:
+  portainer_data:
+    external: true
+
+networks:
+  estatetial:
+  bookstack:
+  centrifugo:
+  teamcity:
+  media:
+  vpn:
+  psql:
+  redis:
+  tunnel:
+    external: true
+  nginx:
+    external: true
+
+services:
+  #################################################################
+  #       NGINX REVERSE PROXY
+  #################################################################
+  # nginx-proxy:
+  #   container_name: nginx
+  #   image: localhost:32000/nginx-rp:latest
+  #   ports:
+  #     - "80:80/tcp"
+  #   restart: unless-stopped
+  nginx-proxy-manager:
+    image: 'jc21/nginx-proxy-manager:latest'
+    container_name: nginx-proxy-manager
+    restart: unless-stopped
+    ports:
+      # These ports are in format <host-port>:<container-port>
+      - '80:80' # Public HTTP Port
+      - '443:443' # Public HTTPS Port
+      - '81:81' # Admin Web Port
+      # Add any other Stream port you want to expose
+      # - '21:21' # FTP
+
+    # Uncomment the next line if you uncomment anything in the section
+    # environment:
+      # Uncomment this if you want to change the location of 
+      # the SQLite DB file within the container
+      # DB_SQLITE_FILE: "/data/database.sqlite"
+
+      # Uncomment this if IPv6 is not enabled on your host
+      # DISABLE_IPV6: 'true'
+
+    volumes:
+      - ./.data:/data
+      - ~/.certs/nginx:/certs
+    networks:
+      - nginx
+  #################################################################
+  #       PORTAINER - CONTAINER MANAGEMENT
+  #################################################################
+  portainer:
+    image: portainer/portainer-ce:latest
+    container_name: portainer
+    ports:
+      - 8000:8000
+      - 9443:9443
+      - 9000:9000
+    volumes:
+      - portainer_data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - nginx
+    restart: unless-stopped
+  #################################################################
+  #       GLANCES
+  #################################################################
+  glances:
+    image: nicolargo/glances:3.2.0-full
+    container_name: glances
+    pid: "host"
+    environment:
+      - TZ=America/Toronto
+      - GLANCES_OPT=--webserver
+    ports:
+      - 61208:61208
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - nginx
+    restart: unless-stopped
+  #################################################################
+  #       BOOKSTACK
+  #################################################################
+  bookstack:
+    image: lscr.io/linuxserver/bookstack
+    container_name: bookstack
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - APP_URL=http://bookstack.morhpt.sv
+      - DB_HOST=bookstack_db
+      - DB_USER=bookstack
+      - DB_PASS=123456
+      - DB_DATABASE=bookstackapp
+    volumes:
+      - ./.bookstack:/config
+    ports:
+      - 6875:80
+    restart: unless-stopped
+    networks:
+      - bookstack
+      - nginx
+    depends_on:
+      - bookstack_db
+  #################################################################
+  #       qBITTORRENT
+  #################################################################
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent:latest
+    container_name: qbittorrent
+    network_mode: "service:gluetun"
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Toronto
+      - WEBUI_PORT=9797
+    volumes:
+      - ~/.qbittorent:/config
+      - /media/downloads:/downloads
+    depends_on:
+      - gluetun
+    networks:
+      - nginx
+    restart: unless-stopped
+  #################################################################
+  #       GLUETUN - VPN
+  #################################################################
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: vpn
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    ports:
+      - 9797:9797 #qbittorrent
+      - 6881:6881 #qbittorrent
+      - 6881:6881/udp #qbittorrent
+    volumes:
+      - ~/.vpn/config.conf:/gluetun/custom.conf:ro
+    environment:
+      - VPN_SERVICE_PROVIDER=nordvpn
+      - OPENVPN_USER=burak.tabn@gmail.com
+      - OPENVPN_PASSWORD=nail199822
+    networks:
+      - vpn
+      - nginx
+    restart: unless-stopped
+  #################################################################
+  #
+  #       DEVELOPMENT
+  #
+  #################################################################
+  #################################################################
+  #       ESTATETIAL NODE - MAIN NODE
+  #################################################################
+  estatetial_node:
+    image: localhost:32000/estatetial-node:latest
+    container_name: estatetial_node
+    command: "--chain /chainSpec.json --base-path /node --ws-external --rpc-external --rpc-methods Unsafe --rpc-cors all --node-key-file /node/key --name \"Main Node\""
+    volumes:
+      - ./.node:/node
+    ports:
+      - 9944:9944
+      - 9933:9933
+      - 30333:30333
+    networks:
+      - estatetial
+    restart: unless-stopped
+  #################################################################
+  #       ESTATETIAL NODE - VALIDATOR ALICE
+  #################################################################
+  alice_validator:
+    image: localhost:32000/estatetial-node:latest
+    container_name: alice_validator
+    command: "--chain /chainSpec.json --base-path /node --validator --alice --name \"Alice Validator\" --bootnodes /ip4/0.0.0.0/tcp/30333/p2p/12D3KooWE8F52CXhApehDPoggDGqgudr2zBvHYpPaFPZgXBUWiwq"
+    env_file:
+      - ./.env
+    volumes:
+      - ./.node/id:/node/id
+      - ./.alice:/node
+    ports:
+      - 30334:30333
+    networks:
+      - estatetial
+    depends_on:
+      - estatetial_node
+    restart: unless-stopped
+  #################################################################
+  #       IPFS
+  #################################################################
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: ipfs
+    volumes:
+      - ~/.ipfs/export:/export
+      - ~/.ipfs/data:/data/ipfs
+    ports:
+      - "4001:4001"
+      - "4001:4001/udp"
+      - "8501:8080"
+      - "5001:5001"
+    networks:
+      - estatetial
+      - nginx
+    restart: unless-stopped
+  #################################################################
+  #       TEAMCITY
+  #################################################################
+  teamcity:
+    image: jetbrains/teamcity-server:2022.04.3
+    container_name: teamcity-server
+    user: "0"
+    volumes:
+      - ~/.teamcity/data:/data/teamcity_server/datadir
+      - ~/.teamcity/logs:/opt/teamcity/logs
+    ports:
+      - 8111:8111
+    depends_on:
+      - psql
+    networks:
+      - teamcity
+      - psql
+      - nginx
+    restart: unless-stopped
+  #################################################################
+  #       TEAMCITY AGENTS
+  #################################################################
+  teamcity-agent-1:
+    image: jetbrains/teamcity-agent:2022.04.3-linux-sudo
+    container_name: tc-agent-1
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.teamcity/agents/agent-1/conf:/data/teamcity_agent/conf
+    user: "0"
+    environment:
+      - SERVER_URL=teamcity.morhpt.sv
+    networks:
+      - teamcity
+    restart: unless-stopped
+  teamcity-agent-2:
+    image: jetbrains/teamcity-agent:2022.04.3-linux-sudo
+    container_name: tc-agent-2
+    user: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.teamcity/agents/agent-2/conf:/data/teamcity_agent/conf
+    environment:
+      - SERVER_URL=teamcity.morhpt.sv
+    networks:
+      - teamcity
+    restart: unless-stopped
+  #################################################################
+  #
+  #       MEDIA
+  #
+  #################################################################
+  #################################################################
+  #       JELLYFIN
+  #################################################################
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:latest
+    container_name: jellyfin
+    volumes:
+      - /srv/jellyfin/config:/config
+      - /srv/jellyfin/cache:/cache
+      - /virt/media:/media
+      - /media:/media2
+    restart: "unless-stopped"
+    # Optional - alternative address used for autodiscovery
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Toronto
+      - JELLYFIN_PublishedServerUrl=https://jelllyfin.buraktaban.ca
+    ports:
+      - 8096:8096
+    networks:
+      - tunnel
+      - nginx
+  #################################################################
+  #       RADARR
+  #################################################################
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Toronto
+    volumes:
+      - ./.radarr:/config
+      - /virt/media/movies:/movies #optional
+      - /media/movies:/moveis2
+      - /media/downloads:/downloads #optional
+    ports:
+      - 7878:7878
+    networks:
+      - media
+      - vpn
+      - nginx
+    restart: unless-stopped
+  #################################################################
+  #       JACKETT
+  #################################################################
+  jackett:
+    image: lscr.io/linuxserver/jackett:latest
+    container_name: jackett
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Toronto
+      - AUTO_UPDATE=true #optional
+      - RUN_OPTS=<run options here> #optional
+    volumes:
+      - ./.jackett:/config
+      - /media/downloads:/downloads
+    ports:
+      - 9117:9117
+    networks:
+      - media
+      - nginx
+    restart: unless-stopped
+  #################################################################
+  #       SONARR
+  #################################################################
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=America/Toronto
+    volumes:
+      - ./.sonarr:/config
+      - /virt/media/shows:/tv #optional
+      - /media/downloads:/downloads #optional
+      - /media/tv/:/tv2
+    ports:
+      - 8989:8989
+    networks:
+      - media
+      - vpn
+      - nginx
+    restart: unless-stopped
+  #################################################################
+  #
+  #       DATABASES
+  #
+  #################################################################
+  #################################################################
+  #       POSTGRESQL
+  #################################################################
+  psql:
+    image: postgres
+    container_name: psql
+    restart: always
+    environment:
+      PGDATA: /var/lib/postgresql/data/pgdata
+      POSTGRES_PASSWORD: 123456
+    volumes:
+      - /postgresql:/var/lib/postgresql/data
+    ports:
+      - 5432:5432
+    networks:
+      - psql
+  #################################################################
+  #       PG-ADMIN
+  #################################################################
+  pgadmin:
+    container_name: pgadmin4
+    image: dpage/pgadmin4
+    restart: always
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    ports:
+      - "5050:80"
+    networks:
+      - psql
+      - nginx
+    depends_on:
+      - psql
+  #################################################################
+  #       BOOKSTACK MYSQL DATABASE
+  #################################################################
+  bookstack_db:
+    image: lscr.io/linuxserver/mariadb
+    container_name: bookstack_db
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - MYSQL_ROOT_PASSWORD=123456
+      - TZ=Europe/London
+      - MYSQL_DATABASE=bookstackapp
+      - MYSQL_USER=bookstack
+      - MYSQL_PASSWORD=123456
+    volumes:
+      - ./.mariadb:/config
+    networks:
+      - bookstack
+      - nginx
+    restart: unless-stopped
+  #################################################################
+  #       REDIS
+  #################################################################
+  redis:
+    image: redis
+    container_name: redis
+    volumes:
+      - ~/.redis:/data
+    ports:
+      - 6379:6379
+    networks:
+      - redis
+    restart: always

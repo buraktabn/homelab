@@ -1,0 +1,43 @@
+version: "3"
+
+networks:
+  nginx:
+    external: true
+  psgl:
+    external: true
+  redis:
+    external: true
+  ipfs:
+    external: true
+
+services:
+  ipfs:
+    image: ipfs/kubo:latest
+    container_name: ipfs
+    volumes:
+      - ~/.ipfs/export:/export
+      - ~/.ipfs/data:/data/ipfs
+    ports:
+      - "4001:4001"
+      - "4001:4001/udp"
+      - "8501:8080"
+      - "5001:5001"
+    networks:
+      - ipfs
+      - nginx
+    restart: unless-stopped
+  nextcloud:
+    image: nextcloud
+    container_name: nextcloud
+    restart: always
+    ports:
+      - 9987:80
+    volumes:
+      - /data/nextcloud:/var/www/html
+    env_file:
+      - ./psql.env
+      - ./redis.env
+    networks:
+      - nginx
+      - psgl
+      - redis

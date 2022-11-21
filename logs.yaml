@@ -1,0 +1,90 @@
+version: "3"
+
+networks:
+  monitoring:
+    external: true
+  nginx:
+    external: true
+  logging:
+    external: true
+
+services:
+  loki:
+    image: grafana/loki:2.4.0
+    container_name: grafana_loki
+    env_file:
+      - ./tz.env
+    volumes:
+      - /media/logs/loki:/etc/loki
+    ports:
+      - "3100:3100"
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki-config.yml
+    networks:
+      - logging
+  promtail:
+    image: grafana/promtail:2.4.0
+    container_name: promtail
+    restart: unless-stopped
+    env_file:
+      - ./tz.env
+    volumes:
+      - /var/log:/var/log
+      - /media/logs/promtail:/etc/promtail
+    # ports:
+    #   - "1514:1514" # this is only needed if you are going to send syslogs
+    command: -config.file=/etc/promtail/promtail-config.yml
+    networks:
+      - logging
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    user: "1000"
+    env_file:
+      - ./tz.env
+    volumes:
+    - /media/logs/grafana:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    restart: unless-stopped
+    networks:
+      - logging
+      - nginx
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+    env_file:
+      - ./tz.env
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    expose:
+      - 9100
+    networks:
+      - monitoring
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    env_file:
+      - ./tz.env
+    volumes:
+      - /media/logs/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    expose:
+      - 9090
+    networks:
+      - monitoring
+      - logging
